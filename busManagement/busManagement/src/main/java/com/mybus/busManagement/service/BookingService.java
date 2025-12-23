@@ -1,0 +1,135 @@
+package com.mybus.busManagement.service;
+
+import com.mybus.busManagement.dto.BookingRequestDTO;
+import com.mybus.busManagement.dto.BookingResponseDTO;
+import com.mybus.busManagement.entity.Booking;
+import com.mybus.busManagement.entity.Booking.BookingStatus;
+import com.mybus.busManagement.entity.Bus;
+import com.mybus.busManagement.exception.BusinessException;
+import com.mybus.busManagement.exception.ResourceNotFoundException;
+import com.mybus.busManagement.repository.BookingRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+@Transactional
+public class BookingService {
+    
+    @Autowired
+    private BookingRepository bookingRepository;
+    
+    @Autowired
+    private BusService busService;
+    
+    // Create a new booking
+    public BookingResponseDTO createBooking(BookingRequestDTO bookingRequestDTO) {
+        // Get the bus
+        Bus bus = busService.getBusEntityById(bookingRequestDTO.getBusId());
+        
+        // Check if bus has enough available seats
+        if (bus.getAvailableSeats() < bookingRequestDTO.getNumberOfSeats()) {
+            throw new BusinessException("Insufficient seats available. Available seats: " + bus.getAvailableSeats());
+        }
+        
+        // Create booking
+        Booking booking = new Booking(
+            bus,
+            bookingRequestDTO.getPassengerName(),
+            bookingRequestDTO.getPassengerEmail(),
+            bookingRequestDTO.getPassengerPhone(),
+            bookingRequestDTO.getNumberOfSeats()
+        );
+        
+        // Update available seats
+        bus.setAvailableSeats(bus.getAvailableSeats() - bookingRequestDTO.getNumberOfSeats());
+        
+        // Save booking
+        Booking savedBooking = bookingRepository.save(booking);
+        
+        return convertToResponseDTO(savedBooking);
+    }
+    
+    // Get all bookings
+    public List<BookingResponseDTO> getAllBookings() {
+        return bookingRepository.findAll().stream()
+            .map(this::convertToResponseDTO)
+            .collect(Collectors.toList());
+    }
+    
+    // Get booking by ID
+    public BookingResponseDTO getBookingById(Long id) {
+        Booking booking = bookingRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
+        return convertToResponseDTO(booking);
+    }
+    
+    // Get bookings by passenger email
+    public List<BookingResponseDTO> getBookingsByEmail(String email) {
+        List<Booking> bookings = bookingRepository.findByPassengerEmail(email);
+        return bookings.stream()
+            .map(this::convertToResponseDTO)
+            .collect(Collectors.toList());
+    }
+    
+    // Cancel a booking
+    public BookingResponseDTO cancelBooking(Long id) {
+        Booking booking = bookingRepository.findByIdAndBookingStatus(id, BookingStatus.CONFIRMED)
+            .orElseThrow(() -> new ResourceNotFoundException(
+                "Booking not found with id: " + id + " or already cancelled"));
+        
+        // Update booking status
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        booking.setCancellationDate(LocalDateTime.now());
+        
+        // Update available seats in bus
+        Bus bus = booking.getBus();
+        bus.setAvailableSeats(bus.getAvailableSeats() + booking.getNumberOfSeats());
+        
+        // Save booking
+        Booking cancelledBooking = bookingRepository.save(booking);
+        
+        return convertToResponseDTO(cancelledBooking);
+    }
+    
+    // Get all confirmed bookings
+    public List<BookingResponseDTO> getConfirmedBookings() {
+        List<Booking> bookings = bookingRepository.findByBookingStatus(BookingStatus.CONFIRMED);
+        return bookings.stream()
+            .map(this::convertToResponseDTO)
+            .collect(Collectors.toList());
+    }
+    
+    // Get all cancelled bookings
+    public List<BookingResponseDTO> getCancelledBookings() {
+        List<Booking> bookings = bookingRepository.findByBookingStatus(BookingStatus.CANCELLED);
+        return bookings.stream()
+            .map(this::convertToResponseDTO)
+            .collect(Collectors.toList());
+    }
+    
+    // Helper method to convert Booking entity to BookingResponseDTO
+    private BookingResponseDTO convertToResponseDTO(Booking booking) {
+        return new BookingResponseDTO(
+            booking.getId(),
+            booking.getBus().getId(),
+            booking.getBus().getSource(),
+            booking.getBus().getDestination(),
+            booking.getBus().getJourneyDate(),
+            booking.getBus().getJourneyTime(),
+            booking.getPassengerName(),
+            booking.getPassengerEmail(),
+            booking.getPassengerPhone(),
+            booking.getNumberOfSeats(),
+            booking.getTotalFare(),
+            booking.getBookingStatus().toString(),
+            booking.getBookingDate(),
+            booking.getCancellationDate()
+        );
+    }
+}
+
